@@ -1,3 +1,3 @@
 #!/bin/bash
-cd /home/ccoupe/tracker
-/usr/bin/python3 zmq_tracker.py -p 4783
+cd /home/ccoupe/Projects/iot/tracker
+/usr/bin/python3 zmq_tracker.py -c bronco.json
