@@ -51,7 +51,9 @@ class Settings:
     self.image_port = conf.get('image_port', 4783)
     self.turrets = conf.get('turrets', None)
     self.confidence = conf.get('confidence', 0.40)
+    self.http_post = conf.get('http_port', 5000)
     self.do_rtsp = conf.get('provide_rtsp', False)
+    
 
   def print(self):
     self.log.info("==== Settings ====")
@@ -68,6 +70,7 @@ class Settings:
     st['turrets'] = self.turrets
     st['confidence'] = self.confidence
     st['provide_rtsp'] = self.do_rtsp
+    st['http_port'] = self.http_port
     return st
     
   def settings_deserialize(self, jsonstr):

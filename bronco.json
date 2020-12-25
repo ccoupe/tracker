@@ -6,7 +6,8 @@
   "homie_name": "Shape tracker for turrets",
   "image_port": 4783,
   "confidence": 0.40,
-  "provide_rtsp": true,
+  "provide_rtsp": false,
+  "http_port": 5000,
   "turrets": ["homie/turret_front/turret_1/control/set",
               "homie/turret_back/turret_1/control/set"]
 }
