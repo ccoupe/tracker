@@ -89,7 +89,7 @@ def shapes_detect(image, threshold, debug):
 
 def create_stream(keep=False):
   global stream_handle, settings, loop_running, hmqtt, log, http_active, zmq_active
-  log.info('create stream')
+  log.info(f'create stream, keep={keep}')
   http_active = False
   debugF = None
   if keep:
@@ -98,9 +98,10 @@ def create_stream(keep=False):
     debugF = cv2.VideoWriter('/tmp/tracker.avi',fourcc, 15, (640,480)); 
       
   # notify kodi and Login Panel that the stream is active
-  hmqtt.seturi(json.dumps({'uri':f'http://{settings.our_IP}:{settings.http_post}/tracker.cam'}))
+  hmqtt.seturi(json.dumps({'uri':f'http://{settings.our_IP}:{settings.http_port}/tracker.mjpg'}))
   totfr = 0
   cnt = 0
+  sentfr = 0
   zmq_active = True
   while zmq_active:
     #(rpiName, frame) = imageHub.recv_image()
@@ -130,6 +131,7 @@ def create_stream(keep=False):
           imageQ.get_nowait()
         except Queue.Empty:
           pass
+      sentfr += 1
       imageQ.put(frame)
       
     totfr += 1
@@ -137,7 +139,7 @@ def create_stream(keep=False):
 		
   if debugF:
     debugF.release()
-  log.info(f' wrote {cnt} movements out of {totfr}')
+  log.info(f' wrote {cnt} movements out of {totfr}, {sentfr} send to http')
 
   
 def end_stream():
@@ -173,7 +175,8 @@ class CamHandler(BaseHTTPRequestHandler):
   
   def do_GET(self):
     global http_active, zmq_active, log
-    log.info(self.path)
+    host,port = self.client_address
+    log.info(f'http get from {host},{port} for {self.path}')
     if self.path.endswith('.mjpg'):
       http_active = True
       self.send_response(200)
@@ -206,7 +209,7 @@ class CamHandler(BaseHTTPRequestHandler):
       self.send_header('Content-type','text/html')
       self.end_headers()
       self.wfile.write(bytes('<html><head></head><body>', encoding="utf-8"))
-      self.wfile.write(bytes('<img src="http://192.168.1.2:5000/cam.mjpg"/>', encoding="utf-8"))
+      self.wfile.write(bytes('<img src="http://192.168.1.2:5000/tracker.mjpg"/>', encoding="utf-8"))
       self.wfile.write(bytes('</body></html>', encoding="utf-8"))
       return
 

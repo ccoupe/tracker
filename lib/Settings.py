@@ -51,7 +51,7 @@ class Settings:
     self.image_port = conf.get('image_port', 4783)
     self.turrets = conf.get('turrets', None)
     self.confidence = conf.get('confidence', 0.40)
-    self.http_post = conf.get('http_port', 5000)
+    self.http_port = conf.get('http_port', 5000)
     self.do_rtsp = conf.get('provide_rtsp', False)
     
 
