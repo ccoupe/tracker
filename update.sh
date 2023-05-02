@@ -1,3 +1,3 @@
 #!/bin/bash
-cp -a /home/ccoupe/Projects/iot/tracker/* /home/ccoupe/tracker
-sudo systemctl restart zmqtracker
+sudo cp -a /home/ccoupe/Projects/iot/tracker/* /usr/local/lib/zmqtracker
+#sudo systemctl restart zmqtracker

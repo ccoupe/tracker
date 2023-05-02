@@ -1,13 +1,13 @@
 {
-  "mqtt_server_ip": "192.168.1.7",
+  "mqtt_server_ip": "stoic.local",
   "mqtt_port": 1883,
-  "mqtt_client_name": "tracker_1",
+  "mqtt_client_name": "tracker_bronco",
   "homie_device": "turret_tracker",
   "homie_name": "Shape tracker for turrets",
   "image_port": 4783,
   "confidence": 0.40,
   "provide_rtsp": false,
-  "http_port": 5000,
+  "http_port": 4795,
   "turrets": ["homie/turret_front/turret_1/control/set",
               "homie/turret_back/turret_1/control/set"]
 }

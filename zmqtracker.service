@@ -3,7 +3,8 @@ Description=Shape Tracker for TrumpyBear
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/zmqtrk.sh
+User=ccoupe
+ExecStart=/usr/local/lib/zmqtracker/zmqtrk.sh
 Restart=on-abort
 
 [Install]

@@ -18,6 +18,7 @@ class Settings:
     self.turrets = []     # list of dicts.
     # IP and MacAddr are not important (should not be important).
     if sys.platform.startswith('linux'):
+      self.hostname = f'{socket.gethostname()}.local'
       s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
       s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
       s.connect(('<broadcast>', 0))
@@ -25,8 +26,10 @@ class Settings:
       # from stackoverflow (of course):
       self.macAddr = ':'.join(("%012x" % get_mac())[i:i+2] for i in range(0, 12, 2))
     elif sys.platform.startswith('darwin'):
-      host_name = socket.gethostname() 
-      self.our_IP = socket.gethostbyname(host_name) 
+      self.hostname = socket.gethostname()
+      s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      s.connect(("8.8.8.8", 80))
+      self.our_IP = s.getsockname()[0]
       self.macAddr = ':'.join(("%012x" % get_mac())[i:i+2] for i in range(0, 12, 2))
     else:
       self.our_IP = "192.168.1.255"
@@ -51,7 +54,7 @@ class Settings:
     self.image_port = conf.get('image_port', 4783)
     self.turrets = conf.get('turrets', None)
     self.confidence = conf.get('confidence', 0.40)
-    self.http_port = conf.get('http_port', 5000)
+    self.http_port = conf.get('http_port', 4795)
     self.do_rtsp = conf.get('provide_rtsp', False)
     
 

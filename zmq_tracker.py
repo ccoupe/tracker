@@ -12,6 +12,8 @@ import warnings
 from datetime import datetime
 import time,threading, sched
 from http.server import BaseHTTPRequestHandler,HTTPServer
+import time, threading, socket
+from http.server import socketserver #, BaseHTTPServer
 import queue as Queue
 import logging
 import os
@@ -20,6 +22,8 @@ import paho.mqtt.client as mqtt
 import socket
 from lib.Settings import Settings
 from lib.Homie_MQTT import Homie_MQTT
+import GPUtil
+import base64
 
 debug = False;
 
@@ -27,15 +31,19 @@ classes = None
 colors = None
 dlnet = None
 imageHub = None
-wake_topic = 'homie/turret_tracker/control/set'
+#wake_topic = 'homie/turret_tracker/control/set'
 http_active = False
 zmq_active = False
 loop_running = False
 stream_handle = None
 imageQ = None
+htppQueues = []
+sock = None
+addr = None
+
 
 def init_models():
-  global classes, colors, dlnet
+  global classes, colors, dlnet, have_cuda
   classes = ["background", "aeroplane", "bicycle", "bird", "boat",
     "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
     "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
@@ -43,6 +51,11 @@ def init_models():
   colors = np.random.uniform(0, 255, size=(len(classes), 3))
   dlnet = cv2.dnn.readNetFromCaffe("shapes/MobileNetSSD_deploy.prototxt.txt",
     "shapes/MobileNetSSD_deploy.caffemodel")
+  log.info('Checking for cuda')
+  if have_cuda  is True:
+      log.info('Will use cuda backend')
+      dlnet.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+      dlnet.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
 
         
 def shapes_detect(image, threshold, debug):
@@ -87,9 +100,10 @@ def shapes_detect(image, threshold, debug):
   return (False, None)
 
 
-def create_stream(keep=False):
+def create_stream(keep=False, panel=False):
   global stream_handle, settings, loop_running, hmqtt, log, http_active, zmq_active
-  log.info(f'create stream, keep={keep}')
+  global imageQ
+  log.info(f'create stream keep={keep}, panel={panel}')
   http_active = False
   debugF = None
   if keep:
@@ -97,16 +111,25 @@ def create_stream(keep=False):
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     debugF = cv2.VideoWriter('/tmp/tracker.avi',fourcc, 15, (640,480)); 
       
-  # notify kodi and Login Panel that the stream is active
-  hmqtt.seturi(json.dumps({'uri':f'http://{settings.our_IP}:{settings.http_port}/tracker.mjpg'}))
   totfr = 0
   cnt = 0
   sentfr = 0
   zmq_active = True
+  first_img = True
   while zmq_active:
     #(rpiName, frame) = imageHub.recv_image()
     rpiName, jpg_buffer = imageHub.recv_jpg()
     frame = cv2.imdecode(np.frombuffer(jpg_buffer, dtype='uint8'), -1)
+    if first_img:
+      first_img = False
+      log.info('got first image, inviting a http get')
+      # notify kodi OR the Login Panel that the stream is active
+      jstr = json.dumps({'uri':f'http://{settings.our_IP}:{settings.http_port}/tracker.mjpg'})
+      if panel:
+        hmqtt.seturi_panel(jstr)
+      else:
+        hmqtt.seturi_kodi(jstr)
+      
     #log.info(f'got frame from {rpiName}')
     tf, rect = shapes_detect(frame, settings.confidence, debug)
     if tf:
@@ -122,6 +145,8 @@ def create_stream(keep=False):
     
     if debugF:
       debugF.write(frame)
+    # Todo: Multiple queues. http_active is True when a http request for
+    # mjeg stream arrived. That is when we create a queue/stream. 
     if http_active:
       # push to end of queue if http thread is active
       if imageQ.full: 
@@ -142,39 +167,65 @@ def create_stream(keep=False):
   log.info(f' wrote {cnt} movements out of {totfr}, {sentfr} send to http')
 
   
-def end_stream():
-  global stream_handle, loop_running, zmq_active
+def end_stream(panel=False):
+  global stream_handle, loop_running, zmq_active, log, settings
   log.info('end stream')
   zmq_active = False
   # setting uri to none means stream listeners should stop reading
-  hmqtt.seturi(json.dumps({'uri':None}))
-  pt = {'power': 0}
+  jstr =json.dumps({'uri':None})
+  if panel:
+    hmqtt.seturi_panel(jstr)
+  else:
+    hmqtt.seturi_kodi(jstr)
+  jstr = json.dumps({'power': 0})
   for tur in settings.turrets:
-    hmqtt.client.publish(tur, json.dumps(pt))
-  
+    log.info(f'stopping laser {tur}')
+    hmqtt.client.publish(tur, jstr)
+   
 # callback is in it's own thread
 def ctrlCB(self, jstr):
-  global log, loop_running
+  global log, loop_running, settings
   args = json.loads(jstr)
   log.info(f'args: {args}')
-  if args.get('begin', False):
+  # is the message for us {begin: <our hostname> } 
+  us = args.get('begin', None)
+  if us == True or us == settings.hostname:
+    pnl = args.get('panel',False)
     if args.get('debug', False):
-      create_stream(keep=True)
+      create_stream(keep=True,panel=pnl)
     else:
-      create_stream(keep=False)
+      create_stream(keep=False,panel=pnl)
   elif args.get('end', False):
-    
-    end_stream()
+    panel = args.get('panel',False)
+    end_stream(panel)
   else:
     # ignore anything else, since we probably sent the msg,
     # we should not act on it
     pass
   
+def rangerCB(self, payload):
+  global log, settings, hmqtt
+  # convert payload from base64 encoded jpg to opencv
+  img = base64.b64decode(payload)
+  frame = cv2.imdecode(np.frombuffer(img, dtype='uint8'), -1)
+  dim = frame.shape
+  # check for person
+  tf, rect = shapes_detect(frame, settings.confidence, debug)
+  if tf:
+    (x, y, ex, ey) = rect
+  else:
+    (x, y, ex, ey) = (0,0,0,0)
+  dt = {'person': tf, "x": int(x), "y": int(y), "ex": int(ex), "ey": int(ey), "w": dim[1], "h": dim[0]}
+  jstr = json.dumps(dt)
+  # publish bounding box
+  hmqtt.client.publish(settings.hdist_pub, jstr)
+  
+  
 # http server - starts at program launch 
 class CamHandler(BaseHTTPRequestHandler):
   
   def do_GET(self):
-    global http_active, zmq_active, log
+    global http_active, zmq_active, log, settings
     host,port = self.client_address
     log.info(f'http get from {host},{port} for {self.path}')
     if self.path.endswith('.mjpg'):
@@ -189,7 +240,7 @@ class CamHandler(BaseHTTPRequestHandler):
         except Queue.Empty:
           # stream end if no image in 3 secs 
           # if zmq_active == False then it no more images for us
-          log.info('http closing because {"end":}')
+          log.info('http closing because {"end":}?')
           self.close_connection = True
           break
         r, buf = cv2.imencode(".jpg",img)
@@ -209,12 +260,15 @@ class CamHandler(BaseHTTPRequestHandler):
       self.send_header('Content-type','text/html')
       self.end_headers()
       self.wfile.write(bytes('<html><head></head><body>', encoding="utf-8"))
-      self.wfile.write(bytes('<img src="http://192.168.1.2:5000/tracker.mjpg"/>', encoding="utf-8"))
+      self.wfile.write(bytes(f'<img src="http://{settings.our_IP}:5000/tracker.mjpg"/>', encoding="utf-8"))
       self.wfile.write(bytes('</body></html>', encoding="utf-8"))
       return
+      
+
 
 def main():
   global settings, hmqtt, log, imageHub, imageQ
+  global sock, addr, have_cuda
   # process args - port number, 
   ap = argparse.ArgumentParser()
   ap.add_argument("-c", "--conf", required=True, type=str,
@@ -226,18 +280,19 @@ def main():
   log = logging.getLogger('ML_Tracker')
   
   settings = Settings(log, (args["conf"]))
-  hmqtt = Homie_MQTT(settings, ctrlCB)
+  hmqtt = Homie_MQTT(settings, ctrlCB, rangerCB)
   settings.print()
   
   # load the pre-computed models...
+  have_cuda = len(GPUtil.getAvailable()) != 0
   init_models()
 
   log.info(f'listen on {settings.our_IP}:{settings.image_port}')
   imageHub = imagezmq.ImageHub(open_port=f'tcp://*:{settings.image_port}')
   imageQ = Queue.Queue(maxsize=60)
   log.info('tracker running')
-  server = HTTPServer(('',5000),CamHandler)
-  log.info("http server started")
+  server = HTTPServer((settings.our_IP,settings.http_port),CamHandler)
+  log.info(f"http server started on {settings.http_port}")
   server.serve_forever()
 
   #while True:
